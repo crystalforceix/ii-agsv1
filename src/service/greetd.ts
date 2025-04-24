@@ -85,32 +85,37 @@ export class Greetd extends Service {
     };
 
     private async _send<R extends keyof Request>(req: R, payload: Request[R]): Promise<Response> {
-        const connection = new Gio.SocketClient()
-            .connect(new Gio.UnixSocketAddress({ path: SOCK }), null);
+    const connection = new Gio.SocketClient()
+        .connect(new Gio.UnixSocketAddress({ path: SOCK }), null);
 
-        try {
-            const json = JSON.stringify({ type: req, ...payload });
-            const ostream = new Gio.DataOutputStream({
-                close_base_stream: true,
-                base_stream: connection.get_output_stream(),
-                byte_order: Gio.DataStreamByteOrder.HOST_ENDIAN,
-            });
+    try {
+        const json = JSON.stringify({ type: req, ...payload });
+        const ostream = new Gio.DataOutputStream({
+            close_base_stream: true,
+            base_stream: connection.get_output_stream(),
+            byte_order: Gio.DataStreamByteOrder.HOST_ENDIAN,
+        });
 
-            const istream = connection.get_input_stream();
+        const istream = connection.get_input_stream();
 
-            ostream.put_int32(json.length, null);
-            ostream.put_string(json, null);
+        ostream.put_int32(json.length, null);
+        ostream.put_string(json, null);
 
-            const data = await istream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, null);
-            const raw = data.get_data();
-            if (!raw) throw new Error('Failed to read data');
-            const length = new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getUint32(0, true);
-            const res = await istream.read_bytes_async(length, GLib.PRIORITY_DEFAULT, null);
-            return JSON.parse(this._decoder.decode(res.get_data()!)) as Response;
-        } finally {
-            connection.close(null);
-        }
+        const data = await istream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, null);
+        const raw = data.get_data();
+        if (!raw) throw new Error("Failed to read length from greetd socket");
+        const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+        const length = view.getUint32(0, true); // true = little endian
+
+        const res = await istream.read_bytes_async(length, GLib.PRIORITY_DEFAULT, null);
+        const resRaw = res.get_data();
+        if (!resRaw) throw new Error("Failed to read response from greetd socket");
+
+        return JSON.parse(this._decoder.decode(resRaw)) as Response;
+    } finally {
+        connection.close(null);
     }
+}
 }
 
 export const greetd = new Greetd;
